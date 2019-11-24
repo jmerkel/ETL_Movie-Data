@@ -8,6 +8,16 @@ from sqlalchemy import create_engine #SQL Import/export
 import psycopg2
 from config import db_password
 
+# From other function that Extracts Data
+# Import files/data (EXTRACT) --> Shift to outside of function
+raw_file  = 'wikipedia-movies.json'
+with open(f'{raw_file}', mode='r') as file:
+    wikiData = json.load(file)
+
+file_dir = 'the-movies-dataset/'
+kaggleData = pd.read_csv(f'{file_dir}movies_metadata.csv')
+ratingData = pd.read_csv(f'{file_dir}ratings.csv')
+
 def clean_movie(movie):
     movie = dict(movie)
     alt_titles = {}
@@ -76,19 +86,17 @@ def parse_dollars(s):
     else:
         return np.nan
 
+def fill_missing_kaggle_data(df, kaggle_column, wiki_column):
+    df[kaggle_column] = df.apply(
+        lambda row: row[wiki_column] if row[kaggle_column] == 0 else row[kaggle_column]
+        , axis=1)
+    df.drop(columns=wiki_column, inplace=True)
 
 def movieRaitingETL(wikiData, kaggleData, ratingData):
-    # Import files/data (EXTRACT) --> Shift to outside of function
-    raw_file  = 'wikipedia-movies.json'
-    with open(f'{raw_file}', mode='r') as file:
-        wiki_movies_raw = json.load(file)
-
-    file_dir = 'the-movies-dataset/'
-    kaggle_metadata = pd.read_csv(f'{file_dir}movies_metadata.csv')
-    ratings = pd.read_csv(f'{file_dir}ratings.csv')
-
-    #Transform (Wiki Movies)
-    wiki_movies = [movie for movie in wiki_movies_raw
+    ############
+    # Wiki Data
+    ############
+    wiki_movies = [movie for movie in wikiData
         if ('Director' in movie or 'Directed by' in movie) 
             and 'imdb_link' in movie
             and 'No. of episodes' not in movie]
@@ -171,15 +179,112 @@ def movieRaitingETL(wikiData, kaggleData, ratingData):
     ############
     # Kagle Data
     ############
+    # Clean Kagle Data
 
     #Gets non-adult movies & drops column
-    kaggle_metadata = kaggle_metadata[kaggle_metadata['adult'] == 'False'].drop('adult',axis='columns') 
+    kaggleData = kaggleData[kaggleData['adult'] == 'False'].drop('adult',axis='columns') 
+
+    kaggleData['video'] = kaggleData['video'] == 'True'
+    kaggleData['budget'] = kaggleData['budget'].astype(int)
+    kaggleData['id'] = pd.to_numeric(kaggleData['id'], errors='raise')
+    kaggleData['popularity'] = pd.to_numeric(kaggleData['popularity'], errors='raise')
+    kaggleData['release_date'] = pd.to_datetime(kaggleData['release_date'])
+
+    ############
+    # Merge Data
+    ############
+    movies_df = pd.merge(wiki_movies_df, kaggleData, on='imdb_id', suffixes=['_wiki','_kaggle'])
+    
+    # Drop extreme date mismatches 
+    movies_df = movies_df.drop(movies_df[(movies_df['release_date_wiki'] > '1996-01-01') & \
+        (movies_df['release_date_kaggle'] < '1965-01-01')].index)
+    movies_df = movies_df.drop(movies_df[(movies_df['release_date_kaggle'] > '1996-01-01') & \
+        (movies_df['release_date_wiki'] < '1965-01-01')].index)
+
+    # Competing data:
+    # Wiki                     Movielens                Resolution
+    #--------------------------------------------------------------------------
+    # title_wiki               title_kaggle             Drop Wiki
+    # running_time             runtime                  Keep Kaggle; fill in zeros with Wikipedia
+    # budget_wiki              budget_kaggle            Keep Kaggle; fill in zeros with Wikipedia
+    # box_office               revenue                  Keep Kaggle; fill in zeros with Wikipedia
+    # release_date_wiki        release_date_kaggle      Drop Wiki
+    # Language                 original_language        Drop Wiki
+    # Production company(s)    production_companies     Drop Wiki
+
+    movies_df.drop(columns=['title_wiki', 'release_date_wiki', 'Language', 'Production company(s)'], inplace=True)
+    fill_missing_kaggle_data(movies_df, 'runtime', 'running_time')
+    fill_missing_kaggle_data(movies_df, 'budget_kaggle', 'budget_wiki')
+    fill_missing_kaggle_data(movies_df, 'revenue', 'box_office')
+
+    #Reorder & Rename columns
+    movies_df = movies_df[['imdb_id','id','title_kaggle','original_title','tagline','belongs_to_collection','url','imdb_link',
+                       'runtime','budget_kaggle','revenue','release_date_kaggle','popularity','vote_average','vote_count',
+                       'genres','original_language','overview','spoken_languages','Country',
+                       'production_companies','production_countries','Distributor',
+                       'Producer(s)','Director','Starring','Cinematography','Editor(s)','Writer(s)','Composer(s)','Based on'
+                      ]]
+
+    movies_df.rename({'id':'kaggle_id',
+                    'title_kaggle':'title',
+                    'url':'wikipedia_url',
+                    'budget_kaggle':'budget',
+                    'release_date_kaggle':'release_date',
+                    'Country':'country',
+                    'Distributor':'distributor',
+                    'Producer(s)':'producers',
+                    'Director':'director',
+                    'Starring':'starring',
+                    'Cinematography':'cinematography',
+                    'Editor(s)':'editors',
+                    'Writer(s)':'writers',
+                    'Composer(s)':'composers',
+                    'Based on':'based_on'
+                    }, axis='columns', inplace=True)
+    
+    ########################
+    # Ratings Transformation
+    ########################
+
+    # Raname userID to count
+    rating_counts = ratingData.groupby(['movieId','rating'], as_index=False).count() \
+                    .rename({'userId':'count'}, axis=1) \
+                    .pivot(index='movieId',columns='rating', values='count')
+    rating_counts.columns = ['rating_' + str(col) for col in rating_counts.columns] # Append "rating_" to each column. Example: rating_3.5
 
 
+    #MERGE
+    rating_counts.columns = ['rating_' + str(col) for col in rating_counts.columns]
+    movies_with_ratings_df = pd.merge(movies_df, rating_counts, left_on='kaggle_id', right_index=True, how='left')
+    movies_with_ratings_df[rating_counts.columns] = movies_with_ratings_df[rating_counts.columns].fillna(0)
 
 
+    ###############
+    # Load into SQL
+    ###############
 
+    ### SQL Connection
+    db_string = f"postgres://postgres:{db_password}@127.0.0.1:5432/movie_data"
+    engine = create_engine(db_string)
+    #TESTING COMMENT
+    print("Reached SQL")
+    #movies_df.to_sql(name='movies', con=engine)
 
+    ### Loading status update
+#    rows_imported = 0
+#    start_time = time.time()
+#    for data in ratingData, chunksize=1000000):
+#
+#        # print out the range of rows that are being imported
+#        print(f'importing rows {rows_imported} to {rows_imported + len(data)}...', end='')
+#
+#        data.to_sql(name='ratings', con=engine, if_exists='append')
+#        rows_imported += len(data)
+#
+#        # print that the rows have finished importing
+#        # add elapsed time to final print out
+#        print(f'Done. {time.time() - start_time} total seconds elapsed')
 
     #END
-    return something
+    completeString = "Movie ETL complete"
+    return completeString
