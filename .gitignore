@@ -1,5 +1,6 @@
 # Explicit files
 config.py
+the-movies-dataset/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
