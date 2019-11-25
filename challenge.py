@@ -5,8 +5,8 @@ import numpy as np
 import re #regular expression
 import time
 from sqlalchemy import create_engine #SQL Import/export
-#import psycopg2
-#from config import db_password
+import psycopg2
+from config import db_password
 
 def clean_movie(movie):
     movie = dict(movie)
@@ -89,7 +89,8 @@ def movieRatingETL(wikiData_raw, kaggleData_raw, ratingData_raw):
     file_dir = 'the-movies-dataset/'
     with open(f'{wikiData_raw}', mode='r') as file:
         wikiData = json.load(file)
-    wiki_movies_df = pd.DataFrame(wikiData)
+
+    #wiki_movies_df = pd.DataFrame(wikiData)
     kaggleData = pd.read_csv(f'{file_dir}{kaggleData_raw}', low_memory=False)
     ratingData = pd.read_csv(f'{file_dir}{ratingData_raw}', low_memory=False)
 
@@ -174,26 +175,29 @@ def movieRatingETL(wikiData_raw, kaggleData_raw, ratingData_raw):
     date_form_three = r'(?:January|February|March|April|May|June|July|August|September|October|November|December)\s\d{4}'
     date_form_four = r'\d{4}' 
 
-    release_date.str.extract(f'({date_form_one}|{date_form_two}|{date_form_three}|{date_form_four})', flags=re.IGNORECASE)
-    wiki_movies_df['release_date'] = pd.to_datetime(release_date.str.extract \
-        (f'({date_form_one}|{date_form_two}|{date_form_three}|{date_form_four})')[0], infer_datetime_format=True)
-
+    try: 
+        release_date.str.extract(f'({date_form_one}|{date_form_two}|{date_form_three}|{date_form_four})', flags=re.IGNORECASE)
+        wiki_movies_df['release_date'] = pd.to_datetime(release_date.str.extract \
+            (f'({date_form_one}|{date_form_two}|{date_form_three}|{date_form_four})')[0], infer_datetime_format=True)
+    except:
+        print("Date Extraction failure")
 
     #Parse Running Time
     running_time = wiki_movies_df['Running time'].dropna().apply(lambda x: ' '.join(x) if type(x) == list else x)
 
-    #hours & minutes or minutes
-    running_time_extract = running_time.str.extract(r'(\d+)\s*ho?u?r?s?\s*(\d*)|(\d+)\s*m')
+    try:
+        #hours & minutes or minutes
+        running_time_extract = running_time.str.extract(r'(\d+)\s*ho?u?r?s?\s*(\d*)|(\d+)\s*m')
 
-    #covert string to numeric values, empty str to NaN
-    running_time_extract = running_time_extract.apply(lambda col: pd.to_numeric(col, errors='coerce')).fillna(0)
+        #covert string to numeric values, empty str to NaN
+        running_time_extract = running_time_extract.apply(lambda col: pd.to_numeric(col, errors='coerce')).fillna(0)
 
-    #Convert hours to minutes
-    wiki_movies_df['running_time'] = running_time_extract.apply(lambda row: row[0]*60 + row[1] if row[2] == 0 else row[2], axis=1)
+        #Convert hours to minutes
+        wiki_movies_df['running_time'] = running_time_extract.apply(lambda row: row[0]*60 + row[1] if row[2] == 0 else row[2], axis=1)
 
+    except
+        print("Extraction of running time failed")
     wiki_movies_df.drop('Running time', axis=1, inplace=True)
-
-
 
     ############
     # Kagle Data
@@ -216,11 +220,14 @@ def movieRatingETL(wikiData_raw, kaggleData_raw, ratingData_raw):
     print("Merge Wiki & Kagle")
     movies_df = pd.merge(wiki_movies_df, kaggleData, on='imdb_id', suffixes=['_wiki','_kaggle'])
     
-    # Drop extreme date mismatches 
-    movies_df = movies_df.drop(movies_df[(movies_df['release_date_wiki'] > '1996-01-01') & \
-        (movies_df['release_date_kaggle'] < '1965-01-01')].index)
-    movies_df = movies_df.drop(movies_df[(movies_df['release_date_kaggle'] > '1996-01-01') & \
-        (movies_df['release_date_wiki'] < '1965-01-01')].index)
+    try: 
+        # Drop extreme date mismatches 
+        movies_df = movies_df.drop(movies_df[(movies_df['release_date_wiki'] > '1996-01-01') & \
+            (movies_df['release_date_kaggle'] < '1965-01-01')].index)
+        movies_df = movies_df.drop(movies_df[(movies_df['release_date_kaggle'] > '1996-01-01') & \
+            (movies_df['release_date_wiki'] < '1965-01-01')].index)
+    except: 
+        print("extreme date mismatch problem")
 
     # Competing data:
     # Wiki                     Movielens                Resolution
@@ -232,36 +239,45 @@ def movieRatingETL(wikiData_raw, kaggleData_raw, ratingData_raw):
     # release_date_wiki        release_date_kaggle      Drop Wiki
     # Language                 original_language        Drop Wiki
     # Production company(s)    production_companies     Drop Wiki
+    try:
+        movies_df.drop(columns=['title_wiki', 'release_date_wiki', 'Language', 'Production company(s)'], inplace=True)
+    except:
+        print("Could not drop columns")
 
-    movies_df.drop(columns=['title_wiki', 'release_date_wiki', 'Language', 'Production company(s)'], inplace=True)
-    fill_missing_kaggle_data(movies_df, 'runtime', 'running_time')
-    fill_missing_kaggle_data(movies_df, 'budget_kaggle', 'budget_wiki')
-    fill_missing_kaggle_data(movies_df, 'revenue', 'box_office')
+    try:
+        fill_missing_kaggle_data(movies_df, 'runtime', 'running_time')
+        fill_missing_kaggle_data(movies_df, 'budget_kaggle', 'budget_wiki')
+        fill_missing_kaggle_data(movies_df, 'revenue', 'box_office')
+    except:
+        print("Could not fill data")
 
+    try:
     #Reorder & Rename columns
-    movies_df = movies_df[['imdb_id','id','title_kaggle','original_title','tagline','belongs_to_collection','url','imdb_link',
-                       'runtime','budget_kaggle','revenue','release_date_kaggle','popularity','vote_average','vote_count',
-                       'genres','original_language','overview','spoken_languages','Country',
-                       'production_companies','production_countries','Distributor',
-                       'Producer(s)','Director','Starring','Cinematography','Editor(s)','Writer(s)','Composer(s)','Based on'
-                      ]]
+        movies_df = movies_df[['imdb_id','id','title_kaggle','original_title','tagline','belongs_to_collection','url','imdb_link',
+                        'runtime','budget_kaggle','revenue','release_date_kaggle','popularity','vote_average','vote_count',
+                        'genres','original_language','overview','spoken_languages','Country',
+                        'production_companies','production_countries','Distributor',
+                        'Producer(s)','Director','Starring','Cinematography','Editor(s)','Writer(s)','Composer(s)','Based on'
+                        ]]
 
-    movies_df.rename({'id':'kaggle_id',
-                    'title_kaggle':'title',
-                    'url':'wikipedia_url',
-                    'budget_kaggle':'budget',
-                    'release_date_kaggle':'release_date',
-                    'Country':'country',
-                    'Distributor':'distributor',
-                    'Producer(s)':'producers',
-                    'Director':'director',
-                    'Starring':'starring',
-                    'Cinematography':'cinematography',
-                    'Editor(s)':'editors',
-                    'Writer(s)':'writers',
-                    'Composer(s)':'composers',
-                    'Based on':'based_on'
-                    }, axis='columns', inplace=True)
+        movies_df.rename({'id':'kaggle_id',
+                        'title_kaggle':'title',
+                        'url':'wikipedia_url',
+                        'budget_kaggle':'budget',
+                        'release_date_kaggle':'release_date',
+                        'Country':'country',
+                        'Distributor':'distributor',
+                        'Producer(s)':'producers',
+                        'Director':'director',
+                        'Starring':'starring',
+                        'Cinematography':'cinematography',
+                        'Editor(s)':'editors',
+                        'Writer(s)':'writers',
+                        'Composer(s)':'composers',
+                        'Based on':'based_on'
+                        }, axis='columns', inplace=True)
+    except:
+        print("Could not re-arrange/rename files")
     
     ########################
     # Ratings Transformation
@@ -280,33 +296,33 @@ def movieRatingETL(wikiData_raw, kaggleData_raw, ratingData_raw):
     movies_with_ratings_df = pd.merge(movies_df, rating_counts, left_on='kaggle_id', right_index=True, how='left')
     movies_with_ratings_df[rating_counts.columns] = movies_with_ratings_df[rating_counts.columns].fillna(0)
 
-    #TESTING COMMENT
-    print("Reached SQL")
     
     ###############
     # Load into SQL
     ###############
+    try:
+        ### SQL Connection
+        db_string = f"postgres://postgres:{db_password}@127.0.0.1:5432/movie_data"
+        engine = create_engine(db_string)
 
-    ### SQL Connection
-#    db_string = f"postgres://postgres:{db_password}@127.0.0.1:5432/movie_data"
-#    engine = create_engine(db_string)
+        movies_df.to_sql(name='movies', con=engine, if_exists='append')
 
-#    movies_df.to_sql(name='movies', con=engine, if_exists='append')
+        ### Loading status update
+        rows_imported = 0
+        start_time = time.time()
+        for data in ratingData, chunksize=1000000):
 
-#    ### Loading status update
-#    rows_imported = 0
-#    start_time = time.time()
-#    for data in ratingData, chunksize=1000000):
-#
-#        # print out the range of rows that are being imported
-#        print(f'importing rows {rows_imported} to {rows_imported + len(data)}...', end='')
-#
-#        data.to_sql(name='ratings', con=engine, if_exists='append')
-#        rows_imported += len(data)
-#
-#        # print that the rows have finished importing
-#        # add elapsed time to final print out
-#        print(f'Done. {time.time() - start_time} total seconds elapsed')
+            # print out the range of rows that are being imported
+            print(f'importing rows {rows_imported} to {rows_imported + len(data)}...', end='')
+
+            data.to_sql(name='ratings', con=engine, if_exists='append')
+            rows_imported += len(data)
+
+            # print that the rows have finished importing
+            # add elapsed time to final print out
+            print(f'Done. {time.time() - start_time} total seconds elapsed')
+    except:
+        print("Could not load data into SQL")
 
     #END
     completeString = "Movie ETL complete"
@@ -316,8 +332,8 @@ def movieRatingETL(wikiData_raw, kaggleData_raw, ratingData_raw):
 #ETL Main Project Flow
 # From other function that Extracts Data
 # Import files/data (EXTRACT) 
-
 wiki_raw  = 'wikipedia-movies.json'
 kaggle_raw = 'movies_metadata.csv'
 rating_raw = 'ratings.csv'
-movieRatingETL(wiki_raw, kaggle_raw, rating_raw)
+
+print(movieRatingETL(wiki_raw, kaggle_raw, rating_raw))
