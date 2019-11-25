@@ -5,18 +5,8 @@ import numpy as np
 import re #regular expression
 import time
 from sqlalchemy import create_engine #SQL Import/export
-import psycopg2
-from config import db_password
-
-# From other function that Extracts Data
-# Import files/data (EXTRACT) --> Shift to outside of function
-raw_file  = 'wikipedia-movies.json'
-with open(f'{raw_file}', mode='r') as file:
-    wikiData = json.load(file)
-
-file_dir = 'the-movies-dataset/'
-kaggleData = pd.read_csv(f'{file_dir}movies_metadata.csv')
-ratingData = pd.read_csv(f'{file_dir}ratings.csv')
+#import psycopg2
+#from config import db_password
 
 def clean_movie(movie):
     movie = dict(movie)
@@ -92,7 +82,18 @@ def fill_missing_kaggle_data(df, kaggle_column, wiki_column):
         , axis=1)
     df.drop(columns=wiki_column, inplace=True)
 
-def movieRaitingETL(wikiData, kaggleData, ratingData):
+def movieRatingETL(wikiData_raw, kaggleData_raw, ratingData_raw):
+    print("Starting ETL process")
+    print("Starting Extract process")
+
+    file_dir = 'the-movies-dataset/'
+    with open(f'{wikiData_raw}', mode='r') as file:
+        wikiData = json.load(file)
+    wiki_movies_df = pd.DataFrame(wikiData)
+    kaggleData = pd.read_csv(f'{file_dir}{kaggleData_raw}', low_memory=False)
+    ratingData = pd.read_csv(f'{file_dir}{ratingData_raw}', low_memory=False)
+
+    print("Start Wiki Data Process")
     ############
     # Wiki Data
     ############
@@ -100,20 +101,23 @@ def movieRaitingETL(wikiData, kaggleData, ratingData):
         if ('Director' in movie or 'Directed by' in movie) 
             and 'imdb_link' in movie
             and 'No. of episodes' not in movie]
-    wiki_movies_df = pd.DataFrame(wiki_movies)
     
     clean_movies = [clean_movie(movie) for movie in wiki_movies]
     wiki_movies_df = pd.DataFrame(clean_movies)
 
     #REGEX Duplicate Drop - imdb link
-    wiki_movies_df['imdb_id'] = wiki_movies_df['imdb_link'].str.extract(r'(tt\d{7})')
-    wiki_movies_df.drop_duplicates(subset='imdb_id', inplace=True)
+    try:
+        wiki_movies_df['imdb_id'] = wiki_movies_df['imdb_link'].str.extract(r'(tt\d{7})')
+        wiki_movies_df.drop_duplicates(subset='imdb_id', inplace=True)
+    except:
+        print("No Duplicates")
     
     #Remove mostly null columns
-    wiki_columns_to_keep = [column for column in wiki_movies_df.columns \
-        if wiki_movies_df[column].isnull().sum() < len(wiki_movies_df) * 0.9]
-    wiki_movies_df = wiki_movies_df[wiki_columns_to_keep]
-    
+    try:
+        wiki_columns_to_keep = [column for column in wiki_movies_df.columns if wiki_movies_df[column].isnull().sum() < len(wiki_movies_df) * 0.9]
+        wiki_movies_df = wiki_movies_df[wiki_columns_to_keep]
+    except:
+        print("No Mostly Null columns")
 
     # REGEX box office data
     # Example for form 1 --> $123.4 (m/b)illion
@@ -124,20 +128,35 @@ def movieRaitingETL(wikiData, kaggleData, ratingData):
 
 
     #Prepare to Parse Data
-    box_office = wiki_movies_df['Box office'].dropna()
-    box_office = box_office.apply(lambda x: ' '.join(x) if type(x) == list else x)  #Convert lists to strings
-    box_office = box_office.str.replace(r'\$.*[---](?![a-z])', '$', regex=True)     #Remove values between dollar sign and hyphan
-    box_office = box_office.str.replace(r'\[\d+\]\s*', '')  # Remove citation reference
+    try: 
+        box_office = wiki_movies_df['Box office'].dropna()
+    except:
+        box_office = wiki_movies_df['Box office']
+        print("No Box office rows to drop due to N/A")
+    try:
+        box_office = box_office.apply(lambda x: ' '.join(x) if type(x) == list else x)  #Convert lists to strings
+        box_office = box_office.str.replace(r'\$.*[---](?![a-z])', '$', regex=True)     #Remove values between dollar sign and hyphan
+        box_office = box_office.str.replace(r'\[\d+\]\s*', '')  # Remove citation reference
+    except:
+        print("Box Office Reg Ex fail")
+
     
     wiki_movies_df['box_office'] = box_office.str.extract(f'({form_one}|{form_two})', flags=re.IGNORECASE)[0].apply(parse_dollars)
     wiki_movies_df.drop('Box office', axis=1, inplace=True)
     
 
     #Parse Budget Data
-    budget = wiki_movies_df['Budget'].dropna()
-    budget = budget.map(lambda x: ' '.join(x) if type(x) == list else x)
-    budget = budget.str.replace(r'\$.*[-—–](?![a-z])', '$', regex=True)
-    budget = budget.str.replace(r'\[\d+\]\s*', '')
+    try:
+        budget = wiki_movies_df['Budget'].dropna()
+    except:
+        budget = wiki_movies_df['Budget']
+        print("No Budget rows to drop due to N/A")
+    try:
+        budget = budget.map(lambda x: ' '.join(x) if type(x) == list else x)
+        budget = budget.str.replace(r'\$.*[-—–](?![a-z])', '$', regex=True)
+        budget = budget.str.replace(r'\[\d+\]\s*', '')
+    except:
+        print("Budget Reg Ex fail")
 
     wiki_movies_df['budget'] = budget.str.extract(f'({form_one}|{form_two})', flags=re.IGNORECASE)[0].apply(parse_dollars)
     wiki_movies_df.drop('Budget', axis=1, inplace=True)
@@ -179,6 +198,7 @@ def movieRaitingETL(wikiData, kaggleData, ratingData):
     ############
     # Kagle Data
     ############
+    print("Start Kagle Data Process")
     # Clean Kagle Data
 
     #Gets non-adult movies & drops column
@@ -193,6 +213,7 @@ def movieRaitingETL(wikiData, kaggleData, ratingData):
     ############
     # Merge Data
     ############
+    print("Merge Wiki & Kagle")
     movies_df = pd.merge(wiki_movies_df, kaggleData, on='imdb_id', suffixes=['_wiki','_kaggle'])
     
     # Drop extreme date mismatches 
@@ -245,7 +266,7 @@ def movieRaitingETL(wikiData, kaggleData, ratingData):
     ########################
     # Ratings Transformation
     ########################
-
+    print("Start Ratings Process")
     # Raname userID to count
     rating_counts = ratingData.groupby(['movieId','rating'], as_index=False).count() \
                     .rename({'userId':'count'}, axis=1) \
@@ -254,23 +275,25 @@ def movieRaitingETL(wikiData, kaggleData, ratingData):
 
 
     #MERGE
+    print("Merge Ratings into movie")
     rating_counts.columns = ['rating_' + str(col) for col in rating_counts.columns]
     movies_with_ratings_df = pd.merge(movies_df, rating_counts, left_on='kaggle_id', right_index=True, how='left')
     movies_with_ratings_df[rating_counts.columns] = movies_with_ratings_df[rating_counts.columns].fillna(0)
 
-
+    #TESTING COMMENT
+    print("Reached SQL")
+    
     ###############
     # Load into SQL
     ###############
 
     ### SQL Connection
-    db_string = f"postgres://postgres:{db_password}@127.0.0.1:5432/movie_data"
-    engine = create_engine(db_string)
-    #TESTING COMMENT
-    print("Reached SQL")
-    #movies_df.to_sql(name='movies', con=engine)
+#    db_string = f"postgres://postgres:{db_password}@127.0.0.1:5432/movie_data"
+#    engine = create_engine(db_string)
 
-    ### Loading status update
+#    movies_df.to_sql(name='movies', con=engine, if_exists='append')
+
+#    ### Loading status update
 #    rows_imported = 0
 #    start_time = time.time()
 #    for data in ratingData, chunksize=1000000):
@@ -288,3 +311,13 @@ def movieRaitingETL(wikiData, kaggleData, ratingData):
     #END
     completeString = "Movie ETL complete"
     return completeString
+
+
+#ETL Main Project Flow
+# From other function that Extracts Data
+# Import files/data (EXTRACT) 
+
+wiki_raw  = 'wikipedia-movies.json'
+kaggle_raw = 'movies_metadata.csv'
+rating_raw = 'ratings.csv'
+movieRatingETL(wiki_raw, kaggle_raw, rating_raw)
