@@ -195,9 +195,13 @@ def movieRatingETL(wikiData_raw, kaggleData_raw, ratingData_raw):
         #Convert hours to minutes
         wiki_movies_df['running_time'] = running_time_extract.apply(lambda row: row[0]*60 + row[1] if row[2] == 0 else row[2], axis=1)
 
-    except
+    except:
         print("Extraction of running time failed")
-    wiki_movies_df.drop('Running time', axis=1, inplace=True)
+
+    try:    
+        wiki_movies_df.drop('Running time', axis=1, inplace=True)
+    except:
+        print("Running time column drop failed")
 
     ############
     # Kagle Data
