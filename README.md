@@ -11,3 +11,5 @@ This ETL pipelines takes 3 different data sources (2 CCSV files & 1 JSON file), 
 
 
 Programmers Note: At time of submission an error was occuring around the JSON file and the "Box office" column. The jupyter notebook version did not indicate any potential error and continues to run. Loading of the JSON file was unchanged.
+
+NOTE 25 NOV 2019: Resolved issue. Indent problem in Clean Data Function. Resolved.

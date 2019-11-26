@@ -20,34 +20,35 @@ def clean_movie(movie):
         if key in movie:
             alt_titles[key] = movie[key]
             movie.pop(key)
-        if len(alt_titles) > 0:
-            movie['alt_titles'] = alt_titles
+    if len(alt_titles) > 0:
+        movie['alt_titles'] = alt_titles
+
     # merge column names
     def change_column_name(old_name, new_name):
         if old_name in movie:
             movie[new_name] = movie.pop(old_name)
 
-        change_column_name('Adaptation by', 'Writer(s)')
-        change_column_name('Country of origin', 'Country')
-        change_column_name('Directed by', 'Director')
-        change_column_name('Distributed by', 'Distributor')
-        change_column_name('Edited by', 'Editor(s)')
-        change_column_name('Length', 'Running time')
-        change_column_name('Original release', 'Release date')
-        change_column_name('Music by', 'Composer(s)')
-        change_column_name('Produced by', 'Producer(s)')
-        change_column_name('Producer', 'Producer(s)')
-        change_column_name('Productioncompanies ', 'Production company(s)')
-        change_column_name('Productioncompany ', 'Production company(s)')
-        change_column_name('Released', 'Release Date')
-        change_column_name('Release Date', 'Release date')
-        change_column_name('Screen story by', 'Writer(s)')
-        change_column_name('Screenplay by', 'Writer(s)')
-        change_column_name('Story by', 'Writer(s)')
-        change_column_name('Theme music composer', 'Composer(s)')
-        change_column_name('Written by', 'Writer(s)')
+    change_column_name('Adaptation by', 'Writer(s)')
+    change_column_name('Country of origin', 'Country')
+    change_column_name('Directed by', 'Director')
+    change_column_name('Distributed by', 'Distributor')
+    change_column_name('Edited by', 'Editor(s)')
+    change_column_name('Length', 'Running time')
+    change_column_name('Original release', 'Release date')
+    change_column_name('Music by', 'Composer(s)')
+    change_column_name('Produced by', 'Producer(s)')
+    change_column_name('Producer', 'Producer(s)')
+    change_column_name('Productioncompanies ', 'Production company(s)')
+    change_column_name('Productioncompany ', 'Production company(s)')
+    change_column_name('Released', 'Release Date')
+    change_column_name('Release Date', 'Release date')
+    change_column_name('Screen story by', 'Writer(s)')
+    change_column_name('Screenplay by', 'Writer(s)')
+    change_column_name('Story by', 'Writer(s)')
+    change_column_name('Theme music composer', 'Composer(s)')
+    change_column_name('Written by', 'Writer(s)')
 
-        return movie
+    return movie
 
 def parse_dollars(s):
     # if s is not a string, return NaN
@@ -314,7 +315,7 @@ def movieRatingETL(wikiData_raw, kaggleData_raw, ratingData_raw):
         ### Loading status update
         rows_imported = 0
         start_time = time.time()
-        for data in ratingData, chunksize=1000000):
+        for data in pd.read_csv(f'{file_dir}ratings.csv', chunksize=1000000):
 
             # print out the range of rows that are being imported
             print(f'importing rows {rows_imported} to {rows_imported + len(data)}...', end='')
